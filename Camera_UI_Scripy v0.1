@@ -1,0 +1,174 @@
+import os
+import time
+from datetime import datetime
+import threading
+import glob
+
+import pygame
+from gpiozero import Button
+from picamera2 import Picamera2, Preview
+# Battery: adapt code for your UPS Hat (often I2C or ADC, here as dummy function)
+def get_battery_stats():
+    # Example: Return percent, volts, and estimate mins left.
+    return 85, 4.05, 120
+
+PHOTO_DIR = os.path.expanduser("~/Desktop/Photo")
+VIDEO_DIR = os.path.expanduser("~/Desktop/Video")
+os.makedirs(PHOTO_DIR, exist_ok=True)
+os.makedirs(VIDEO_DIR, exist_ok=True)
+
+WIDTH, HEIGHT = 240, 135  # Pimoroni Mini Display resolution
+
+pygame.init()
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("PiCam UI")
+
+# BUTTONS -- Connect to your Pi's GPIO appropriately
+btn_a = Button(17)
+btn_b = Button(22)
+btn_x = Button(27)
+btn_y = Button(18)
+
+picam2 = Picamera2()
+config = picam2.create_still_configuration(main={"size": (2304, 1296)}, display="main")
+picam2.configure(config)
+picam2.start_preview(Preview.QTGL)
+
+# Autofocus
+def do_autofocus():
+    picam2.set_controls({"AfMode": 2})  # Continuous autofocus
+    picam2.start()
+do_autofocus()
+
+## State variables
+preview_on = True
+in_menu = False
+menu_page = 0
+menu_items = ['ISO', 'Shutter', 'WhiteBalance']
+menu_values = [100, 1000, 'auto']
+in_library = False
+photo_files = sorted(glob.glob(f"{PHOTO_DIR}/*.jpg"))
+current_photo = 0
+mode = 'photo'  # or 'video'
+
+shutter_indicator = False
+shutter_time = 0
+
+def take_photo():
+    global shutter_indicator, shutter_time, photo_files
+    now = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = os.path.join(PHOTO_DIR, f"photo_{now}.jpg")
+    picam2.capture_file(filename)
+    photo_files = sorted(glob.glob(f"{PHOTO_DIR}/*.jpg"))
+    shutter_indicator = True
+    shutter_time = time.time()
+
+def shutdown():
+    # Your safe power-off routine
+    os.system("sudo shutdown now")
+
+## BUTTON HANDLERS
+from signal import pause
+
+def button_a_pressed():  # Shutter
+    if not in_menu and not in_library and preview_on:
+        take_photo()
+
+def button_a_long():  # Toggle video mode placeholder
+    global mode
+    mode = "video" if mode == "photo" else "photo"
+
+def button_a_double():  # Toggle preview on/off
+    global preview_on
+    preview_on = not preview_on
+    if preview_on:
+        picam2.start_preview(Preview.QTGL)
+    else:
+        picam2.stop_preview()
+
+def button_b_pressed():  # Menu
+    global in_menu, menu_page
+    in_menu = not in_menu
+    menu_page = 0
+
+def button_b_long():  # Confirm/select in menu
+    pass  # Implement as needed
+
+def button_b_double():  # Next menu item / next file in library
+    global menu_page, current_photo
+    if in_library:
+        current_photo = (current_photo + 1) % len(photo_files)
+    elif in_menu:
+        menu_page = (menu_page + 1) % len(menu_items)
+
+def button_x_pressed():  # AF spot focus
+    do_autofocus()
+
+def button_x_long():  # Enter library/gallery mode
+    global in_library, current_photo
+    in_library = not in_library
+    current_photo = 0
+
+def button_x_double():
+    if in_library:
+        global current_photo
+        current_photo = (current_photo + 1) % len(photo_files)
+
+def button_y_pressed():  # PowerOff (hold!)
+    hold_time = 3
+    t0 = time.time()
+    while btn_y.is_pressed:
+        if time.time() - t0 > hold_time:
+            shutdown()
+        time.sleep(0.05)
+
+def button_y_double():  # Prev photo in library
+    global current_photo
+    if in_library:
+        current_photo = (current_photo - 1) % len(photo_files)
+
+# Button event connections
+btn_a.when_pressed = button_a_pressed  # add logic for double/long if desired
+btn_b.when_pressed = button_b_pressed
+btn_x.when_pressed = button_x_pressed
+btn_y.when_pressed = button_y_pressed
+
+# Could use threads for double/long press detection, for now assume single press for brevity
+
+def draw_ui():
+    screen.fill((0,0,0))
+    # Draw mode
+    font = pygame.font.SysFont("Arial", 18)
+    mode_str = "Photo" if mode == "photo" else "Video"
+    text = font.render(f"Mode: {mode_str}", True, (255,255,255))
+    screen.blit(text, (2,2))
+    # Draw battery info
+    percent, volts, mins = get_battery_stats()
+    bat_text = font.render(f"BAT: {percent}% {volts:.2f}V {mins}m", True, (0,255,0))
+    screen.blit(bat_text, (2,20))
+    # Draw menu bar or menu
+    if in_menu:
+        mstr = f"{menu_items[menu_page]}: {menu_values[menu_page]}"
+        menu = font.render(mstr, True, (200,200,50))
+        screen.blit(menu, (2, 40))
+    # Draw photo taken indicator
+    if shutter_indicator and (time.time()-shutter_time < 1):
+        pygame.draw.rect(screen, (255,255,255), (0,0,WIDTH,HEIGHT), 3)
+        taken = font.render("Photo Taken!", True, (255,255,0))
+        screen.blit(taken, (60,HEIGHT//2))
+    # Draw library photo
+    if in_library and photo_files:
+        img = pygame.image.load(photo_files[current_photo])
+        img = pygame.transform.scale(img, (WIDTH-20, HEIGHT-20))
+        screen.blit(img, (10,10))
+
+    pygame.display.update()
+
+# MAIN LOOP:
+try:
+    while True:
+        draw_ui()
+        time.sleep(0.05)
+except KeyboardInterrupt:
+    pygame.quit()
+    picam2.stop()
