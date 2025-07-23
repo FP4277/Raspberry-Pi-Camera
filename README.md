@@ -14,8 +14,8 @@ A fun little portable camera built with a Raspberry Pi Zero 2 W.
 ```bash
 sudo nano /etc/dphys-swapfile
 ```
-1.Find the line that looks something like CONF_SWAPSIZE=512
-2.Change the value to something larger EX. 1024 (1GB) and save with Control + O, Return, and Control + X
+1.Find the line  CONF_SWAPSIZE=512
+2.Change the value to something larger Ex. 1024 (1GB) and save with Control + O, Return, and Control + X
 3.Restart the swap service
 ```bash
 sudo systemctl restart dphys-swapfile
