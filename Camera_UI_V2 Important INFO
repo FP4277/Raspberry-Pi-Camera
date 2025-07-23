@@ -1,0 +1,25 @@
+>For single press make sure you hold the button down long enough
+-Display is automatically turned off after 70s of inactivity - Press X/Y once to wake it
+1. Photo Mode Controls
+Button:
+A - Single press - capture photo in either AF/MF
+A - Double press - Toggle live preview
+B - Single Press - View last photo taken in gallery
+B - Double press - Switch to settings mode
+X - Double press - toggle AF <-> MF
+Y - Double press - Shutdown
+X/Y - Single Press - Wake the screen if it dims
+2. Settings Mode Controls
+X - Single press - Select previous setting
+Y - Single press - Select next setting
+X/Y - Double press - Modify selected setting
+A - No Action
+B - Double press - Return to photo mode
+-Settings List:
+ISO - value range - 50 ->800 
+Brightness - 0.5 -> 1.5
+Focus Mode - Toggle AF <-> MF
+3. Gallery Mode (Photo Viewer)
+A - Single press - Exit image viewer
+X - Single press - Previous image
+Y - Single press - Next image
