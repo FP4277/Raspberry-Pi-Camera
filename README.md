@@ -46,7 +46,7 @@ source ~/cam_ui_venv/bin/activate
 6.Install displayhatmini
 ```bash
 pip install --upgrade pip setuptools wheel
-pip install displayhatmini pillow
+pip install displayhatmini pillow pygame
 pip3 install displayhatmini
 pip install "numpy<2.0.0"
 ```
