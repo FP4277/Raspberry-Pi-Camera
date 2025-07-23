@@ -61,8 +61,64 @@ sudo ./install.sh
 cd Pimoroni/displayhatmini/examples
 python pong.py
 ```
+9. Setup the UI script as a systemd service
+```bash
+mkdir Camera_Project
+cd Camera_Project
+```
+10. Save the UI script to the Camera_Project directory
+```bash
+nano camera_ui.py
+chmod +x camera_ui.py
+./camera_ui.py
+```
+11. Make the systemd service
+```bash
+sudo nano /etc/systemd/system/camera-ui.service
+```
+12. Paste
+```bash
+[Unit]
+Description=Camera UI - William Pi
+After=network.target
 
+[Service]
+User=william
+Group=william
+WorkingDirectory=/home/william/Camera_Project
+ExecStart=/home/william/cam_ui_venv/bin/python /home/william/Camera_Project/camera_ui.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
 
+[Install]
+WantedBy=multi-user.target
+```
+13. Start the service
+```bash
+sudo systemctl daemon-reload                 # Reload definitions
+sudo systemctl enable camera-ui.service     # Enable on boot
+sudo systemctl start camera-ui.service      # Start now
+```
+14. Check the status - look for: active (running)
+```bash
+sudo systemctl status camera-ui.service
+```
+-If you want to update the camera script follow the steps below
+1. Stop the camera_UI systemd service
+```bash
+sudo systemctl stop camera-ui.service
+```
+2. Replace or edit camera_ui.py in the Camera_Project directory
+3. Start the systemd service
+```bash
+sudo systemctl start camera-ui.service
+```
+or 
+```bash
+sudo systemctl restart camera-ui.service
+```
+to start everything again
 
 
 
