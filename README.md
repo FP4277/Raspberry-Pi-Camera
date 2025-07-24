@@ -1,5 +1,6 @@
 # Raspberry Pi Camera
 A fun little portable camera built with a Raspberry Pi Zero 2 W.
+This camera will be able to take photos, adjust settings, and more
 
 > ⚠️ Setup on other Pi models may require code modifications.  
 > ⚠️ The provided disk image may not work on devices other than the Pi Zero 2 W.  
