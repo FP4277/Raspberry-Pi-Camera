@@ -1,7 +1,18 @@
 # Raspberry Pi Camera
 A fun little portable camera built with a Raspberry Pi Zero 2 W.
-This camera will be able to take photos, adjust settings, and more
-
+## ✅ Features
+- Auto / Manual exposure control
+- Manual shutter speed and ISO
+- Autofocus toggle
+- Live image preview
+- Photo capture (JPEG / RAW)
+- User-selectable profiles (Low Light, Indoors, Daylight, Auto)
+- Image gallery viewer
+- Help overlay
+- Metering mode: average / center / spot
+- Screen dimming after idle
+- Button-powered settings navigation
+- Designed for Raspberry Pi Zero 2 W + Pi Camera 3
 > ⚠️ Setup on other Pi models may require code modifications.  
 > ⚠️ The provided disk image may not work on devices other than the Pi Zero 2 W.  
 
