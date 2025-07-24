@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+import os
+import time
+import glob
+import threading
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance
+from picamera2 import Picamera2
+from displayhatmini import DisplayHATMini
+
+# Configuration
+DISPLAY_WIDTH = 320
+DISPLAY_HEIGHT = 240
+PHOTO_DIR = os.path.expanduser("~/Desktop/Camera")
+BACKLIGHT_BRIGHT = 1.0
+BACKLIGHT_DIM = 0.25
+IDLE_TIMEOUT = 70
+DOUBLE_PRESS_WINDOW = 0.35
+AVG_PHOTO_SIZE_MB = 2
+
+os.makedirs(PHOTO_DIR, exist_ok=True)
+
+# Display setup
+display_img = Image.new("RGB", (DISPLAY_WIDTH, DISPLAY_HEIGHT))
+draw = ImageDraw.Draw(display_img)
+display = DisplayHATMini(display_img)
+display.set_backlight(BACKLIGHT_BRIGHT)
+
+try:
+    font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
+except:
+    font = ImageFont.load_default()
+
+BUTTONS = {
+    'A': DisplayHATMini.BUTTON_A,
+    'B': DisplayHATMini.BUTTON_B,
+    'X': DisplayHATMini.BUTTON_X,
+    'Y': DisplayHATMini.BUTTON_Y
+}
+
+class ButtonHandler:
+    def __init__(self, callback):
+        self.callback = callback
+        self.state = {k: False for k in BUTTONS}
+        self.last_press_time = {}
+        self.running = True
+        threading.Thread(target=self.poll, daemon=True).start()
+
+    def poll(self):
+        while self.running:
+            now = time.monotonic()
+            for label, pin in BUTTONS.items():
+                pressed = display.read_button(pin)
+                if pressed and not self.state[label]:
+                    if label in self.last_press_time and (now - self.last_press_time[label] < DOUBLE_PRESS_WINDOW):
+                        self.callback(label, double=True)
+                        self.last_press_time[label] = 0
+                    else:
+                        self.last_press_time[label] = now
+                    self.state[label] = True
+                elif not pressed and self.state[label]:
+                    if self.last_press_time.get(label, 0):
+                        if time.monotonic() - self.last_press_time[label] >= DOUBLE_PRESS_WINDOW:
+                            self.callback(label, double=False)
+                    self.state[label] = False
+            time.sleep(0.05)
+
+    def stop(self):
+        self.running = False
+
+class CameraUI:
+    def __init__(self):
+        self.mode = 'photo'
+        self.preview_enabled = True
+        self.viewing = False
+        self.delete_prompt = False
+        self.last_interaction = time.monotonic()
+        self.last_photo_path = None
+        self.gallery = []
+        self.current_photo = 0
+
+        self.iso = 200
+        self.shutter_speed = 10000
+        self.focus_auto = True
+        self.capture_format = "jpeg"
+
+        self.settings_index = 0
+        self.settings = ['ISO', 'Shutter', 'Focus', 'Format']
+
+        self.picam2 = Picamera2()
+        config = self.picam2.create_preview_configuration(main={"size": (640, 480)})
+        self.picam2.configure(config)
+        self.apply_camera_settings()
+        self.picam2.start()
+
+        self.button_handler = ButtonHandler(self.handle_button)
+        threading.Thread(target=self.preview_loop, daemon=True).start()
+
+    def apply_camera_settings(self):
+        self.picam2.set_controls({
+            "AfMode": 2 if self.focus_auto else 0,
+            "AnalogueGain": self.iso / 100 if self.iso else 1.0,
+            "ExposureTime": self.shutter_speed if self.shutter_speed else 10000
+        })
+
+    def preview_loop(self):
+        while True:
+            now = time.monotonic()
+            dimmed = now - self.last_interaction > IDLE_TIMEOUT
+            display.set_backlight(BACKLIGHT_DIM if dimmed else BACKLIGHT_BRIGHT)
+
+            if self.preview_enabled and not self.viewing:
+                try:
+                    frame = self.picam2.capture_array()
+                    image = Image.fromarray(frame).rotate(180)
+                    image = image.resize((DISPLAY_WIDTH, DISPLAY_HEIGHT))
+                    display_img.paste(image)
+
+                    # Overlay
+                    draw.rectangle((0, 0, 320, 40), fill=(0, 0, 0))
+                    draw.text((5, 2), f"Mode: {self.mode.upper()}", font=font, fill=(255, 255, 255))
+                    draw.text((250, 2), "AF" if self.focus_auto else "MF", font=font, fill=(255, 255, 0))
+
+                    if self.mode == "settings":
+                        label = self.settings[self.settings_index]
+                        val = self.get_setting_value(label)
+                        draw.text((5, 20), f"{label}: {val}", font=font, fill=(0, 255, 255))
+                    else:
+                        draw.text((5, 20), f"ISO {self.iso} | {int(1_000_000 / self.shutter_speed)}s", font=font, fill=(0, 255, 255))
+
+                    display.display()
+                except Exception as e:
+                    print("Preview error:", e)
+            time.sleep(0.1)
+
+    def get_setting_value(self, label):
+        if label == 'ISO':
+            return str(self.iso)
+        elif label == 'Shutter':
+            return f"1/{int(1_000_000 / self.shutter_speed)}s"
+        elif label == 'Focus':
+            return "AF" if self.focus_auto else "MF"
+        elif label == 'Format':
+            return self.capture_format.upper()
+        return "-"
+
+    def handle_button(self, label, double):
+        self.last_interaction = time.monotonic()
+
+        # Delete prompt
+        if self.delete_prompt:
+            if label == 'A' and not double:
+                self.delete_current_photo()
+            elif label == 'B' and not double:
+                self.delete_prompt = False
+                self.display_gallery_photo()
+            return
+
+        # Gallery navigation
+        if self.viewing:
+            if label == 'A' and not double:
+                self.viewing = False
+            elif label == 'X' and not double:
+                self.current_photo = max(0, self.current_photo - 1)
+                self.display_gallery_photo()
+            elif label == 'Y' and not double:
+                self.current_photo = min(len(self.gallery) - 1, self.current_photo + 1)
+                self.display_gallery_photo()
+            elif label == 'X' and double:
+                self.prompt_delete()
+            return
+
+        # Settings mode
+        if self.mode == 'settings':
+            if label == 'A' and not double:
+                self.modify_setting()
+            elif label == 'X' and not double:
+                self.settings_index = (self.settings_index - 1) % len(self.settings)
+            elif label == 'Y' and not double:
+                self.settings_index = (self.settings_index + 1) % len(self.settings)
+            elif label == 'B' and double:
+                self.mode = 'photo'
+            return
+
+        # Normal mode: photo
+        if label == 'A':
+            if double:
+                self.toggle_preview()
+            else:
+                self.capture_photo()
+        elif label == 'B':
+            if double:
+                self.mode = 'settings'
+            else:
+                self.open_gallery()
+        elif label == 'X' and double:
+            self.focus_auto = not self.focus_auto
+            self.apply_camera_settings()
+            self.flash("AF" if self.focus_auto else "MF")
+        elif label == 'Y' and double:
+            self.shutdown()
+
+    def toggle_preview(self):
+        self.preview_enabled = not self.preview_enabled
+        self.flash("▶" if self.preview_enabled else "■")
+
+    def modify_setting(self):
+        label = self.settings[self.settings_index]
+        if label == 'ISO':
+            self.iso += 100
+            if self.iso > 800: self.iso = 100
+        elif label == 'Shutter':
+            self.shutter_speed = {10000:25000, 25000:50000, 50000:100000, 100000:250000, 250000:10000}[self.shutter_speed]
+        elif label == 'Focus':
+            self.focus_auto = not self.focus_auto
+        elif label == 'Format':
+            self.capture_format = "jpeg" if self.capture_format == "raw" else "raw"
+        self.apply_camera_settings()
+
+    def capture_photo(self):
+        filename = time.strftime("IMG_%Y%m%d_%H%M%S.jpg")
+        path = os.path.join(PHOTO_DIR, filename)
+        self.picam2.capture_file(path)
+        self.last_photo_path = path
+        self.flash("✓")
+
+    def open_gallery(self):
+        self.gallery = sorted(glob.glob(os.path.join(PHOTO_DIR, "*.jpg")))
+        if self.gallery:
+            self.viewing = True
+            self.current_photo = len(self.gallery) - 1
+            self.display_gallery_photo()
+
+    def display_gallery_photo(self):
+        try:
+            img_path = self.gallery[self.current_photo]
+            img = Image.open(img_path).rotate(180).resize((DISPLAY_WIDTH, DISPLAY_HEIGHT))
+            display_img.paste(img)
+            draw.rectangle((0, 0, 320, 20), fill=(0, 0, 0))
+            draw.text((5, 2), f"{self.current_photo+1}/{len(self.gallery)}", font=font, fill=(255, 255, 255))
+            display.display()
+        except:
+            self.viewing = False
+
+    def prompt_delete(self):
+        self.delete_prompt = True
+        draw.rectangle((0, 0, 320, 240), fill=(0, 0, 0))
+        draw.text((80, 100), "Delete Photo?", font=font, fill=(255, 0, 0))
+        draw.text((60, 130), "A = YES   B = NO", font=font, fill=(255, 255, 255))
+        display.display()
+
+    def delete_current_photo(self):
+        try:
+            os.remove(self.gallery[self.current_photo])
+            self.gallery.pop(self.current_photo)
+            self.current_photo = max(0, self.current_photo - 1)
+            self.delete_prompt = False
+            self.flash("DEL")
+            if not self.gallery:
+                self.viewing = False
+            else:
+                self.display_gallery_photo()
+        except:
+            self.flash("ERR")
+            self.viewing = False
+
+    def flash(self, icon):
+        draw.rectangle((280, 0, 319, 20), fill=(255, 255, 255))
+        draw.text((285, 2), icon, font=font, fill=(0, 0, 0))
+        display.display()
+        time.sleep(0.3)
+
+    def shutdown(self):
+        self.flash("OFF")
+        draw.rectangle((0, 0, 320, 240), fill=(0, 0, 0))
+        draw.text((70, 110), "Shutting down...", font=font, fill=(255, 0, 0))
+        display.display()
+        time.sleep(1)
+        os.system("sudo shutdown now")
+
+    def stop(self):
+        self.button_handler.stop()
+        self.picam2.stop()
+        display.set_backlight(0)
+
+if __name__ == "__main__":
+    ui = CameraUI()
+    print("📸 Camera running. Press Ctrl+C to exit.")
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Exiting...")
+        ui.stop()
